@@ -30,7 +30,10 @@ export default function SongDetail() {
   const [isEditing, setIsEditing] = useState(false)
   
   const [editForm, setEditForm] = useState({ title: '', key_signature: '', lyrics: '', authors: [], vocalists: [] })
+  
+  // ESTADOS PARA SUGERENCIAS DE AUTORES
   const [authorInput, setAuthorInput] = useState('')
+  const [existingAuthors, setExistingAuthors] = useState([])
   const [availableVocalists, setAvailableVocalists] = useState([])
 
   const [newCifraFile, setNewCifraFile] = useState(null)
@@ -63,8 +66,20 @@ export default function SongDetail() {
         vocalists: data.vocalists || []
       })
 
+      // 1. OBTENEMOS VOCALISTAS
       const { data: vData } = await supabase.from('band_vocalists').select('name').eq('band_id', data.band_id)
       if (vData) setAvailableVocalists(vData.map(v => v.name))
+
+      // 2. OBTENEMOS TODOS LOS AUTORES PARA LAS SUGERENCIAS
+      const { data: dictData } = await supabase.from('band_authors').select('name').eq('band_id', data.band_id)
+      const catalogAuthors = dictData ? dictData.map(a => a.name) : []
+
+      const { data: songsData } = await supabase.from('songs').select('authors').eq('band_id', data.band_id)
+      const usedAuthors = songsData ? songsData.flatMap(s => s.authors || []) : []
+
+      const uniqueCombinedAuthors = [...new Set([...catalogAuthors, ...usedAuthors])]
+      uniqueCombinedAuthors.sort((a, b) => a.localeCompare(b))
+      setExistingAuthors(uniqueCombinedAuthors)
 
       if (data.song_attachments && data.song_attachments.length > 0) {
         const path = data.song_attachments[0].storage_path
@@ -88,6 +103,11 @@ export default function SongDetail() {
   const removeAuthor = (name) => {
     setEditForm({ ...editForm, authors: editForm.authors.filter(a => a !== name) })
   }
+
+  // Filtrado de sugerencias
+  const filteredAuthorSuggestions = existingAuthors.filter(
+    a => a.toLowerCase().includes(authorInput.toLowerCase()) && !editForm.authors.includes(a)
+  )
 
   const toggleVocalist = (name) => {
     setEditForm(prev => {
@@ -163,11 +183,17 @@ export default function SongDetail() {
   const handleSaveEdit = async () => {
     setIsSaving(true)
     try {
+      // CAPTURAR TEXTO PENDIENTE EN EL INPUT DE AUTORES
+      const finalAuthors = [...editForm.authors]
+      if (authorInput.trim() && !finalAuthors.includes(authorInput.trim())) {
+        finalAuthors.push(authorInput.trim())
+      }
+
       await supabase.from('songs').update({
         title: editForm.title,
         key_signature: editForm.key_signature,
         lyrics: editForm.lyrics,
-        authors: editForm.authors,
+        authors: finalAuthors, // Guardamos los autores finales
         vocalists: editForm.vocalists
       }).eq('id', id)
 
@@ -194,6 +220,7 @@ export default function SongDetail() {
 
       setIsEditing(false)
       setNewCifraFile(null)
+      setAuthorInput('') // Limpiamos el input
       fetchSong() 
     } catch (error) {
       console.error(error)
@@ -266,7 +293,8 @@ export default function SongDetail() {
               </select>
             </div>
 
-            <div className="md:col-span-2">
+            {/* SECCIÓN AUTORES CON MENÚ DESPLEGABLE */}
+            <div className="md:col-span-2 relative">
               <label className="text-xs text-gray-400 font-bold uppercase block mb-1">Autores / Intérpretes originales</label>
               <div className="w-full bg-neutral-900 border border-neutral-600 rounded p-2 focus-within:border-emerald-500 flex flex-wrap gap-2 items-center">
                 {editForm.authors.map(author => (
@@ -289,11 +317,23 @@ export default function SongDetail() {
                   placeholder="Agregar autor..."
                 />
               </div>
+
+              {authorInput.trim() && filteredAuthorSuggestions.length > 0 && (
+                <div className="absolute top-full left-0 w-full mt-1 bg-neutral-900 border border-neutral-600 rounded shadow-xl z-20 max-h-48 overflow-y-auto">
+                  {filteredAuthorSuggestions.map(suggestion => (
+                    <div 
+                      key={suggestion}
+                      className="p-2 text-gray-300 hover:bg-emerald-800 hover:text-white cursor-pointer text-sm border-b border-neutral-800"
+                      onClick={() => addAuthor(suggestion)}
+                    >
+                      {suggestion}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="md:col-span-2 border-t border-neutral-700 pt-6 mt-2 flex flex-col md:flex-row justify-between items-start md:items-start gap-6">
-              
-              {/* Lado Izquierdo: Vocalistas */}
               {availableVocalists.length > 0 && (
                 <div className="flex-1">
                   <label className="text-xs text-gray-400 font-bold uppercase block mb-2">Vocalista en la Banda (Opcional)</label>
@@ -319,7 +359,6 @@ export default function SongDetail() {
                 </div>
               )}
 
-              {/* Lado Derecho: Herramienta Insertar Nota (Inline) */}
               <div className="w-full md:w-auto flex flex-col items-start md:items-end shrink-0">
                 <div className="flex bg-neutral-950 p-1.5 rounded-lg border border-neutral-700 gap-1 w-full md:w-auto shadow-inner">
                   <select 
